@@ -1,0 +1,103 @@
+这个示例安装Ubuntu 14.04 (Trusty Tahr) 版本镜像。创建其他版本的Ubuntu镜像，注意下面安装过程的标记不同的地方。
+
+一. 下载一个 Ubuntu 安装 ISO
+1. 可以去163站点去下载
+
+二. 安装Ubuntu系统
+使用在之前示例中讲解的 virt-manager 或者 virt-install 命令。如果你使用virt-install ，记得使用 VNC 客户端连接到虚拟机。
+
+假设你的虚拟机名称是 trusty ，当你使用 virsh 命令操作虚拟机状态的时候你需要虚拟机名称。
+
+如果你使用 virt-manager 命令，示例命令如下：
+
+# qemu-img create -f qcow2 /tmp/trusty.qcow2 10G
+# virt-install --virt-type kvm --name trusty --ram 1024 \
+    --cdrom=/data/isos/trusty-64-mini.iso \
+    --disk /tmp/trusty.qcow2,format=qcow2 \
+    --network network=default \
+    --graphics vnc,listen=0.0.0.0 --noautoconsole \
+    --os-type=linux --os-variant=ubuntutrusty
+
+三.安装步骤
+在安装初始启动菜单中，选择 Install 。安装过程提示中，默认的即可。
+
+1.主机名
+
+安装程序要求填入主机名。默认的 (ubuntu) 即可。后面我们将安装 cloud-init 包，cloud-init 包将在将来使用镜像创建新虚拟机启动的时候设置主机名。
+ 
+2.选择镜像站点
+
+选择默认的镜像站点即可。
+ 安装步骤
+
+	1) 安装过程中，使用默认的选项即可，当提示输入用户名时，使用默认的 (ubuntu) 即可。
+
+	2) 磁盘分区
+	目前有几个分区选项。默认的安装程序使用 LVM 分区，将创建三个分区 (/boot, /, swap)，使用默认的即可。作为可选的，你也可以创建单个 ext4 分区，挂载 "/"。
+	如果你不太确定如何分区，我们推荐你使用安装程序默认的分区方案，因为目前也没有任何方案完全优于其他分区方案。
+
+	3) 自动更新
+	Ubuntu 安装程序询问你如何设置系统更新。这个选项依赖于你的使用环境，如果将来创建的虚拟机能链接到因特网，我们推荐 "Install security updates automatically"。
+ 
+	4) 软件选择：OpenSSH 服务
+	选择 "OpenSSH server" 以便在 OpenStack 中启动虚拟机时你能 SSH 登陆到虚拟机。
+
+	5) 安装 GRUB 引导程序
+	当提示安装 GRUB 引导程序到硬盘主启动记录时，选择 "Yes"。
+
+	6) 卸载 CD-ROM 并重启
+	剩下的步骤中，选择默认的值即可。当安装完成时，你会看到提示移除 CD-ROM。
+	使用 virsh 弹出光驱时，libvirt 要求你挂一个空磁盘在光驱相同的位置。在之前盘符是 hdc 。你可以使用 virsh dumpxml vm-image 命令来完成。
+	# virsh dumpxml trusty
+	<domain type='kvm'>
+	<name>trusty</name>
+	...
+    <disk type='block' device='cdrom'>
+      <driver name='qemu' type='raw'/>
+      <target dev='hdc' bus='ide'/>
+      <readonly/>
+      <address type='drive' controller='0' bus='1' target='0' unit='0'/>
+    </disk>
+	...
+	</domain>
+	
+	在宿主机上以 root 用户运行以下命令暂停虚拟机，弹出磁盘然后恢复虚拟机。如果你使用 virt-manager ，你需要在图形界面完成这个过程。
+
+	# virsh start trusty --paused
+	# virsh attach-disk --type cdrom --mode readonly trusty "" hdc
+	# virsh resume trustoud-init 必须明确的配置元数据源。OpenStack 元数据服务仿效 Amazon EC2 元数据服务。
+
+四. 安装 cloud-init
+	1) 运行 dpkg-reconfigure 命令设置镜像 cloud-init 软件包使用的元数据源。当屏幕出现提示时，选择 EC2 数据源。
+
+	# dpkg-reconfigure cloud-init
+
+	不同的发行版保存的账户不同，在基于 Ubuntu 的虚拟机，账户是 ubuntu ，基于 Fedora 的虚拟机，账户是 ec2-user 。
+
+	你可以编辑 /etc/cloud/cloud.cfg 文件添加一行修改 cloud-init 使用的账户名，例如，添加以下这行到配置文件，来配置 cloud-init 存放公钥到admin账户。
+
+	user: admin
+
+	2) 关闭虚拟机
+
+	在虚拟机内，以root用户运行：
+
+	# /sbin/shutdown -h now
+
+	3) 清理（删除 MAC 地址相关信息）
+
+	操作系统会在/etc/sysconfig/network-scripts/ifcfg-eth0 和 /etc/udev/rules.d/70-persistent-net.rules 这类文件记录下网卡MAC地址，但是，虚拟机的网卡MAC地址在每次虚拟机创建的时候都会不同，因此这些信息必须从配置文件删除掉。
+
+	目前有 virt-sysprep 工具可以完成清理虚拟机镜像内的 MAC 地址相关的信息。
+
+	# virt-sysprep -d trusty
+
+	4) 删除 libvirt 虚拟机域
+
+	现在你可以上传虚拟机镜像到镜像服务了，所以不再需要 libvirt 来管理虚拟机镜像，使用 virsh undefine vm-image 命令来完成。
+
+	# virsh undefine trusty
+
+五. 镜像准备完成
+
+	前面你使用 qemu-img create 命令创建的镜像已经准备好可以上传了，你可以上传 /tmp/trusty.qcow2 文件到 Openstack 镜像服务
